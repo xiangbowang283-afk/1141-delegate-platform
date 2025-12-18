@@ -3,490 +3,454 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>工作委託平台 (進階版)</title>
+    <title>工作委託平台</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://unpkg.com/react@18/umd/react.development.js" crossorigin></script>
     <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js" crossorigin></script>
     <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
-    <style>
-        @keyframes spin { to { transform: rotate(360deg); } }
-        .loading-spinner {
-            border: 4px solid rgba(0, 0, 0, .1); border-left-color: #007bff;
-            border-radius: 50%; width: 40px; height: 40px; animation: spin 1s linear infinite;
-        }
-    </style>
 </head>
-<body class="bg-gray-100 text-gray-800">
+<body class="bg-gray-100 font-sans">
     <div id="root"></div>
 
     <script type="text/babel">
-        const { useState, useEffect, useCallback, StrictMode } = React;
+        const { useState, useEffect, StrictMode } = React;
         const API_URL = "http://127.0.0.1:8000";
 
-        // ----- UI Components -----
-        const Button = ({ children, onClick, type = 'button', variant = 'primary', disabled = false, className = '' }) => {
+        // --- 共用元件 ---
+        const Button = ({ children, onClick, variant = 'primary', className='' }) => {
             const styles = {
                 primary: "bg-blue-600 text-white hover:bg-blue-700",
-                secondary: "bg-gray-200 text-gray-800 hover:bg-gray-300",
-                danger: "bg-red-500 text-white hover:bg-red-600",
+                secondary: "bg-gray-500 text-white hover:bg-gray-600",
                 success: "bg-green-600 text-white hover:bg-green-700",
+                danger: "bg-red-600 text-white hover:bg-red-700",
+                outline: "border border-blue-600 text-blue-600 hover:bg-blue-50"
             };
-            return (
-                <button type={type} onClick={onClick} disabled={disabled}
-                    className={`px-4 py-2 rounded shadow-sm transition disabled:opacity-50 disabled:cursor-not-allowed ${styles[variant]} ${className}`}>
-                    {children}
-                </button>
-            );
+            return <button onClick={onClick} className={`px-4 py-2 rounded transition ${styles[variant]} ${className}`}>{children}</button>;
         };
 
-        const Input = ({ label, ...props }) => (
-            <div className="mb-2">
-                <label className="block text-sm font-medium mb-1">{label}</label>
-                <input className="w-full px-3 py-2 border rounded focus:ring-2 focus:ring-blue-500 outline-none" {...props} />
+        const Input = ({ label, type="text", value, onChange }) => (
+            <div className="mb-3">
+                <label className="block text-gray-700 font-bold mb-1">{label}</label>
+                <input type={type} value={value} onChange={onChange} className="w-full border p-2 rounded focus:outline-none focus:ring-2 focus:ring-blue-400" />
             </div>
         );
 
-        const Modal = ({ children, onClose, title }) => (
-            <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
-                <div className="bg-white rounded-lg shadow-xl max-w-lg w-full max-h-[90vh] overflow-y-auto">
-                    <div className="flex justify-between items-center p-4 border-b">
+        const Modal = ({ title, onClose, children }) => (
+            <div className="fixed inset-0 bg-black bg-opacity-50 flex justify-center items-center z-50 p-4">
+                <div className="bg-white rounded-lg shadow-xl w-full max-w-lg max-h-[90vh] overflow-y-auto p-6">
+                    <div className="flex justify-between items-center mb-4 border-b pb-2">
                         <h3 className="text-xl font-bold">{title}</h3>
-                        <button onClick={onClose} className="text-2xl">&times;</button>
+                        <button onClick={onClose} className="text-gray-500 hover:text-black text-2xl">&times;</button>
                     </div>
-                    <div className="p-4">{children}</div>
+                    {children}
                 </div>
             </div>
         );
 
-        const Badge = ({ status }) => {
-            const map = {
-                open: { text: "開放投標", cls: "bg-blue-100 text-blue-800" },
-                in_progress: { text: "進行中", cls: "bg-yellow-100 text-yellow-800" },
-                submitted: { text: "已提交審核", cls: "bg-purple-100 text-purple-800" },
-                completed: { text: "已結案", cls: "bg-green-100 text-green-800" },
-            };
-            const s = map[status] || { text: status, cls: "bg-gray-100" };
-            return <span className={`px-2 py-1 rounded-full text-xs font-semibold ${s.cls}`}>{s.text}</span>;
-        };
+        const StarRating = ({ rating, count, onClick }) => (
+            <div onClick={onClick} className={`flex items-center space-x-1 ${count > 0 ? 'cursor-pointer hover:bg-gray-100' : ''} p-1 rounded transition`}>
+                <span className="text-yellow-500 text-lg">★</span>
+                <span className="font-bold text-gray-800">{rating}</span>
+                <span className="text-gray-500 text-sm">({count} 評價)</span>
+            </div>
+        );
 
-        // ----- Hook: API Fetcher -----
-        const useApi = (token) => {
-            return useCallback(async (endpoint, options = {}) => {
-                const headers = { ...options.headers };
-                if (token) headers['Authorization'] = `Bearer ${token}`;
-                
-                // 自動偵測是否為 FormData (上傳檔案用)，若是則不設 Content-Type (讓瀏覽器自動設 boundary)
-                if (!(options.body instanceof FormData) && !headers['Content-Type']) {
-                    headers['Content-Type'] = 'application/json';
-                }
-                
-                let body = options.body;
-                if (headers['Content-Type'] === 'application/json' && body && typeof body !== 'string') {
-                    body = JSON.stringify(body);
-                }
+        // --- 功能型 Modal ---
 
-                const res = await fetch(`${API_URL}${endpoint}`, { ...options, headers, body });
-                const data = await res.json().catch(() => ({}));
-                if (!res.ok) throw new Error(data.detail || `Error ${res.status}`);
-                return data;
-            }, [token]);
-        };
+        // 1. 查看歷史評價 Modal (顯示標籤已修正)
+        // targetRole: 'client' (我們正在看甲方的歷史) 或 'freelancer' (我們正在看乙方的歷史)
+        const HistoryModal = ({ userId, userName, targetRole, onClose }) => {
+            const [data, setData] = useState(null);
+            
+            useEffect(() => {
+                fetch(`${API_URL}/users/${userId}/stats`).then(r=>r.json()).then(setData);
+            }, [userId]);
 
-        // ----- Pages & Components -----
-
-        function ProjectCard({ project, children, isClient }) {
-            // 計算是否過期
-            const isExpired = project.deadline && new Date(project.deadline) < new Date();
-            const deadlineText = project.deadline ? new Date(project.deadline).toLocaleString() : "無期限";
+            // 根據「被查看者」的身分，顯示對應的維度標籤
+            const labels = targetRole === 'client'
+                ? ["需求合理性", "驗收難度", "合作態度"] // 這是看甲方(委託人)的成績單
+                : ["產出品質", "執行效率", "合作態度"];   // 這是看乙方(接案人)的成績單
 
             return (
-                <div className="bg-white p-5 rounded-lg shadow border mb-4">
-                    <div className="flex justify-between items-start">
-                        <div>
-                            <h3 className="text-lg font-bold text-gray-900">{project.title}</h3>
-                            <div className="flex items-center gap-2 mt-1">
-                                <Badge status={project.status} />
-                                <span className="text-sm text-gray-500">截止: {deadlineText}</span>
-                                {isExpired && project.status === 'open' && <span className="text-xs text-red-600 font-bold">(已截止)</span>}
+                <Modal title={`評價紀錄: ${userName}`} onClose={onClose}>
+                    {!data ? <p>載入中...</p> : (
+                        <div className="space-y-4">
+                            <div className="bg-yellow-50 p-4 rounded text-center">
+                                <div className="text-4xl font-bold text-yellow-600">{data.avg_rating}</div>
+                                <div className="text-sm text-gray-600">總平均 (共 {data.review_count} 筆)</div>
                             </div>
-                            <p className="text-gray-600 mt-2">{project.description || "無描述"}</p>
-                        </div>
-                        <div className="flex flex-col gap-2">
-                            {children}
-                        </div>
-                    </div>
-
-                    {/* 歷史版本顯示區 (僅對已提交且為委託人或該專案接案人顯示) */}
-                    {project.submissions && project.submissions.length > 0 && (
-                        <div className="mt-4 pt-4 border-t">
-                            <h4 className="font-semibold mb-2 text-sm text-gray-700">檔案提交歷史 (最新在最上):</h4>
-                            <ul className="space-y-2">
-                                {project.submissions.map((sub, idx) => (
-                                    <li key={sub.id} className="flex justify-between items-center text-sm bg-gray-50 p-2 rounded">
-                                        <span>
-                                            <span className="font-bold text-gray-600">#{project.submissions.length - idx}</span> 
-                                            <span className="ml-2">{new Date(sub.uploaded_at).toLocaleString()}</span>
-                                            <span className="ml-2 text-gray-500">({sub.version_note})</span>
-                                        </span>
-                                        <a href={`${API_URL}${sub.file_url}`} target="_blank" className="text-blue-600 hover:underline">
-                                            下載此版本
-                                        </a>
-                                    </li>
+                            <div className="space-y-3">
+                                {data.reviews.map(r => (
+                                    <div key={r.id} className="border-b pb-2">
+                                        <div className="flex justify-between font-bold text-gray-700">
+                                            <span>{r.reviewer_name}</span>
+                                            <span className="text-xs text-gray-400">{new Date(r.created_at).toLocaleDateString()}</span>
+                                        </div>
+                                        <div className="flex flex-col space-y-1 text-sm text-gray-600 my-2 bg-gray-50 p-2 rounded">
+                                            <div className="flex justify-between"><span>{labels[0]}:</span> <span className="text-yellow-600 font-bold">{r.rating_1}</span></div>
+                                            <div className="flex justify-between"><span>{labels[1]}:</span> <span className="text-yellow-600 font-bold">{r.rating_2}</span></div>
+                                            <div className="flex justify-between"><span>{labels[2]}:</span> <span className="text-yellow-600 font-bold">{r.rating_3}</span></div>
+                                        </div>
+                                        <p className="text-gray-800 italic">"{r.comment || "無文字評論"}"</p>
+                                    </div>
                                 ))}
-                            </ul>
+                                {data.reviews.length === 0 && <p className="text-gray-500 text-center">暫無評論</p>}
+                            </div>
                         </div>
                     )}
+                </Modal>
+            );
+        };
+
+        // 2. 提交評價 Modal (評分維度已修正)
+        // role: 當前登入者的身分
+        const ReviewFormModal = ({ project, role, token, onClose, onSuccess }) => {
+            // 如果我是 Client (甲方)，我要評 Freelancer (乙方) -> 顯示乙方維度
+            // 如果我是 Freelancer (乙方)，我要評 Client (甲方) -> 顯示甲方維度
+            const labels = role === 'client' 
+                ? ["產出品質", "執行效率", "合作態度"]  // 甲方評乙方 (評量乙方的表現)
+                : ["需求合理性", "驗收難度", "合作態度"]; // 乙方評甲方 (評量甲方的表現)
+
+            const [r1, setR1] = useState(5);
+            const [r2, setR2] = useState(5);
+            const [r3, setR3] = useState(5);
+            const [comment, setComment] = useState("");
+
+            const handleSubmit = async () => {
+                const res = await fetch(`${API_URL}/projects/${project.id}/reviews`, {
+                    method: 'POST',
+                    headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ rating_1: r1, rating_2: r2, rating_3: r3, comment })
+                });
+                if(res.ok) { alert("評價成功！"); onSuccess(); onClose(); }
+                else alert("評價失敗");
+            };
+
+            const RatingSelect = ({ label, val, setVal }) => (
+                <div className="flex justify-between items-center mb-2 border-b border-gray-100 pb-2">
+                    <span className="text-gray-700 font-medium">{label}</span>
+                    <select value={val} onChange={e=>setVal(parseInt(e.target.value))} className="border p-1 rounded bg-white">
+                        {[5,4,3,2,1].map(n => <option key={n} value={n}>{n} 星</option>)}
+                    </select>
                 </div>
             );
-        }
 
-        // --- Client Dashboard ---
-        function ClientDashboard({ user, apiFetch }) {
-            const [projects, setProjects] = useState([]);
-            const [showCreate, setShowCreate] = useState(false);
-            const [viewBidsProject, setViewBidsProject] = useState(null);
+            return (
+                <Modal title={`評價專案: ${project.title}`} onClose={onClose}>
+                    <div className="mb-4 bg-blue-50 p-3 rounded text-sm text-blue-800">
+                        {role === 'client' 
+                            ? "請針對 乙方 (接案人) 進行評分：" 
+                            : "請針對 甲方 (委託人) 進行評分："}
+                    </div>
+                    <div className="space-y-2">
+                        <RatingSelect label={labels[0]} val={r1} setVal={setR1} />
+                        <RatingSelect label={labels[1]} val={r2} setVal={setR2} />
+                        <RatingSelect label={labels[2]} val={r3} setVal={setR3} />
+                    </div>
+                    <div className="mt-4">
+                        <label className="block mb-1 font-bold">總體質性評論</label>
+                        <textarea className="w-full border p-2 rounded focus:ring-2 focus:ring-blue-400 focus:outline-none" rows="3" value={comment} onChange={e=>setComment(e.target.value)} placeholder="請輸入具體意見..."></textarea>
+                    </div>
+                    <div className="mt-4 flex justify-end space-x-2">
+                        <Button variant="secondary" onClick={onClose}>取消</Button>
+                        <Button onClick={handleSubmit}>送出評價</Button>
+                    </div>
+                </Modal>
+            );
+        };
 
-            const fetchProjects = async () => {
-                try {
-                    const data = await apiFetch('/projects/my');
-                    setProjects(data);
-                } catch (e) { alert(e.message); }
+        // --- 主頁面 ---
+        
+        const App = () => {
+            const [token, setToken] = useState(localStorage.getItem('token'));
+            const [user, setUser] = useState(null);
+            const [view, setView] = useState('login'); // login, register, dashboard
+            
+            // 用於 Modal 的狀態
+            // historyTarget: {id, name, role} -> role 用於決定顯示哪種維度標籤
+            const [historyTarget, setHistoryTarget] = useState(null); 
+            const [reviewTarget, setReviewTarget] = useState(null); 
+
+            // API 封裝
+            const api = async (url, method='GET', body=null) => {
+                const opts = { method, headers: { 'Authorization': `Bearer ${token}` } };
+                if (body && !(body instanceof FormData)) {
+                    opts.headers['Content-Type'] = 'application/json';
+                    opts.body = JSON.stringify(body);
+                } else if (body) {
+                    opts.body = body;
+                }
+                const res = await fetch(API_URL + url, opts);
+                return res.ok ? (method === 'GET' || method.includes('POST') ? res.json() : {}) : null;
             };
 
-            useEffect(() => { fetchProjects(); }, []);
+            useEffect(() => {
+                if(token) api('/users/me').then(u => { if(u) { setUser(u); setView('dashboard'); } else setToken(null); });
+            }, [token]);
 
-            const handleAcceptBid = async (bidId) => {
-                if (!confirm("確定接受此提案？專案將進入進行中狀態。")) return;
-                try {
-                    await apiFetch(`/bids/${bidId}/accept`, { method: 'POST' });
-                    alert("已接受提案！");
-                    setViewBidsProject(null);
-                    fetchProjects();
-                } catch (e) { alert(e.message); }
+            const login = async (username, password) => {
+                const fd = new FormData(); fd.append('username', username); fd.append('password', password);
+                const res = await fetch(`${API_URL}/token`, { method: 'POST', body: fd });
+                if(res.ok) {
+                    const data = await res.json();
+                    setToken(data.access_token); localStorage.setItem('token', data.access_token);
+                } else alert("登入失敗");
             };
 
-            const handleReject = async (pid) => {
-                if (!confirm("確定退回修改？")) return;
-                try {
-                    await apiFetch(`/projects/${pid}/reject`, { method: 'POST' });
-                    fetchProjects();
-                } catch (e) { alert(e.message); }
+            const register = async (username, password, role) => {
+                const res = await fetch(`${API_URL}/register`, { 
+                    method: 'POST', headers: {'Content-Type': 'application/json'}, 
+                    body: JSON.stringify({username, password, role}) 
+                });
+                if(res.ok) { alert("註冊成功，請登入"); setView('login'); } else alert("註冊失敗");
             };
 
-            const handleComplete = async (pid) => {
-                if (!confirm("確定結案？")) return;
-                try {
-                    await apiFetch(`/projects/${pid}/complete`, { method: 'POST' });
-                    fetchProjects();
-                } catch (e) { alert(e.message); }
+            // --- 儀表板視圖 ---
+            const Dashboard = () => {
+                const [projects, setProjects] = useState([]);
+                const [openProjects, setOpenProjects] = useState([]);
+                const [formMode, setFormMode] = useState(false); 
+                const [bidsModal, setBidsModal] = useState(null); 
+                
+                const [title, setTitle] = useState(""); const [desc, setDesc] = useState("");
+                const [bidAmount, setBidAmount] = useState(""); const [bidMsg, setBidMsg] = useState("");
+
+                const refresh = () => {
+                    api('/projects/my').then(setProjects);
+                    if(user.role === 'freelancer') api('/projects').then(setOpenProjects);
+                };
+
+                useEffect(refresh, []);
+
+                // 委託人(甲方) 功能
+                const createProject = async () => {
+                    await api('/projects', 'POST', {title, description: desc});
+                    setFormMode(false); refresh();
+                };
+                const viewBids = async (pid, pTitle) => {
+                    const bids = await api(`/projects/${pid}/bids`);
+                    setBidsModal({ pid, title: pTitle, list: bids });
+                };
+                const acceptBid = async (bidId) => {
+                    if(confirm("確定接受此提案？專案將進入執行階段。")) { await api(`/bids/${bidId}/accept`, 'POST'); setBidsModal(null); refresh(); }
+                };
+                const handleWorkflow = async (pid, action) => {
+                    const msg = action === 'complete' ? '確定驗收並結案？(結案後可進行評價)' : '確定退件？專案將退回進行中狀態。';
+                    if(confirm(msg)) {
+                        await api(`/projects/${pid}/${action}`, 'POST'); refresh();
+                    }
+                };
+
+                // 接案人(乙方) 功能
+                const submitBid = async (pid) => {
+                    await api(`/projects/${pid}/bid`, 'POST', {amount: parseFloat(bidAmount), message: bidMsg});
+                    alert("已提交提案"); setBidAmount(""); refresh();
+                };
+                const uploadFile = async (pid, file) => {
+                    const fd = new FormData(); fd.append('file', file);
+                    await api(`/projects/${pid}/submit_file`, 'POST', fd);
+                    alert("檔案已上傳"); refresh();
+                };
+
+                return (
+                    <div className="max-w-4xl mx-auto mt-6 bg-white p-6 rounded shadow">
+                        <div className="flex justify-between items-center mb-6 border-b pb-4">
+                            <h2 className="text-2xl font-bold text-gray-800">
+                                歡迎, {user.username} ({user.role === 'client' ? '甲方/委託人' : '乙方/接案人'})
+                            </h2>
+                            <Button variant="secondary" onClick={()=>{setToken(null); localStorage.removeItem('token'); setView('login');}}>登出</Button>
+                        </div>
+
+                        {/* 甲方 (Client) 介面 */}
+                        {user.role === 'client' && (
+                            <div>
+                                <Button onClick={()=>setFormMode(true)} className="mb-4">建立新委託</Button>
+                                {formMode && (
+                                    <div className="bg-gray-50 p-4 mb-4 rounded border">
+                                        <Input label="專案標題" value={title} onChange={e=>setTitle(e.target.value)} />
+                                        <Input label="需求描述" value={desc} onChange={e=>setDesc(e.target.value)} />
+                                        <div className="flex gap-2">
+                                            <Button onClick={createProject}>送出</Button>
+                                            <Button variant="secondary" onClick={()=>setFormMode(false)}>取消</Button>
+                                        </div>
+                                    </div>
+                                )}
+                                
+                                <h3 className="text-xl font-bold mb-2 text-gray-700">我的委託列表</h3>
+                                {projects.map(p => (
+                                    <div key={p.id} className="border p-4 mb-3 rounded hover:shadow transition relative">
+                                        <div className="flex justify-between items-start">
+                                            <div>
+                                                <h4 className="font-bold text-lg text-blue-800">{p.title}</h4>
+                                                <p className="text-gray-600 text-sm mb-1">{p.description}</p>
+                                                <span className={`px-2 py-1 text-xs rounded text-white 
+                                                    ${p.status==='open'?'bg-green-500':p.status==='completed'?'bg-gray-500':'bg-blue-500'}`}>
+                                                    {p.status === 'open' ? '開放提案中' : p.status === 'in_progress' ? '執行中' : p.status === 'submitted' ? '待驗收' : '已結案'}
+                                                </span>
+                                            </div>
+                                            <div className="flex flex-col gap-2">
+                                                {p.status === 'open' && <Button variant="outline" onClick={()=>viewBids(p.id, p.title)}>查看提案</Button>}
+                                                {p.status === 'submitted' && (
+                                                    <div className="flex gap-2 items-center">
+                                                        <a href={API_URL+p.submission_file_url} target="_blank" className="text-blue-600 underline text-sm px-2">下載成果</a>
+                                                        <Button variant="success" onClick={()=>handleWorkflow(p.id, 'complete')}>驗收通過</Button>
+                                                        <Button variant="danger" onClick={()=>handleWorkflow(p.id, 'reject')}>退件</Button>
+                                                    </div>
+                                                )}
+                                                {p.status === 'completed' && !p.has_reviewed && (
+                                                    <Button onClick={()=>setReviewTarget(p)}>評價乙方</Button>
+                                                )}
+                                                {p.status === 'completed' && p.has_reviewed && <span className="text-gray-400 text-sm font-bold">✓ 已評價</span>}
+                                            </div>
+                                        </div>
+                                    </div>
+                                ))}
+
+                                {/* 查看提案 Modal */}
+                                {bidsModal && (
+                                    <Modal title={`提案管理: ${bidsModal.title}`} onClose={()=>setBidsModal(null)}>
+                                        {bidsModal.list.length === 0 ? "尚無人提案" : bidsModal.list.map(bid => (
+                                            <div key={bid.id} className="border-b py-3 flex justify-between items-center">
+                                                <div>
+                                                    <div className="font-bold text-gray-800 flex items-center gap-2">
+                                                        {bid.freelancer_name} (乙方)
+                                                        {/* 甲方查看乙方的評價 -> 傳入 targetRole='freelancer' */}
+                                                        <StarRating 
+                                                            rating={bid.freelancer_avg_rating} 
+                                                            count={bid.freelancer_review_count} 
+                                                            onClick={()=>setHistoryTarget({id: bid.freelancer_id, name: bid.freelancer_name, role: 'freelancer'})}
+                                                        />
+                                                    </div>
+                                                    <div className="text-green-600 font-bold">${bid.amount}</div>
+                                                    <p className="text-sm text-gray-500">{bid.message}</p>
+                                                </div>
+                                                <Button onClick={()=>acceptBid(bid.id)}>選擇此提案</Button>
+                                            </div>
+                                        ))}
+                                    </Modal>
+                                )}
+                            </div>
+                        )}
+
+                        {/* 乙方 (Freelancer) 介面 */}
+                        {user.role === 'freelancer' && (
+                            <div className="grid md:grid-cols-2 gap-6">
+                                <div>
+                                    <h3 className="text-xl font-bold mb-4 border-b pb-2 text-gray-700">開放中的委託 (可提案)</h3>
+                                    {openProjects.map(p => (
+                                        <div key={p.id} className="border p-4 mb-3 rounded bg-white shadow-sm hover:shadow-md transition">
+                                            <h4 className="font-bold text-blue-700">{p.title}</h4>
+                                            {/* 乙方查看甲方的評價 -> 傳入 targetRole='client' */}
+                                            <div className="flex items-center gap-2 mb-2 mt-1">
+                                                <span className="text-sm text-gray-500">甲方評價:</span>
+                                                <StarRating 
+                                                    rating={p.owner_avg_rating} 
+                                                    count={p.owner_review_count} 
+                                                    onClick={()=>setHistoryTarget({id: p.owner_id, name: "委託人(甲方)", role: 'client'})}
+                                                />
+                                            </div>
+                                            <p className="text-gray-600 text-sm mb-3">{p.description}</p>
+                                            <div className="bg-gray-50 p-3 rounded">
+                                                <div className="flex gap-2 mb-2">
+                                                    <input placeholder="報價金額" type="number" className="border p-1 w-24 text-sm rounded" onChange={e=>setBidAmount(e.target.value)} />
+                                                    <input placeholder="留言/優勢說明" className="border p-1 w-full text-sm rounded" onChange={e=>setBidMsg(e.target.value)} />
+                                                </div>
+                                                <Button className="w-full text-sm py-1" onClick={()=>submitBid(p.id)}>提交提案</Button>
+                                            </div>
+                                        </div>
+                                    ))}
+                                    {openProjects.length === 0 && <p className="text-gray-500">目前沒有開放的委託。</p>}
+                                </div>
+                                <div>
+                                    <h3 className="text-xl font-bold mb-4 border-b pb-2 text-gray-700">我的承接紀錄</h3>
+                                    {projects.map(p => (
+                                        <div key={p.id} className="border p-4 mb-3 rounded bg-gray-50">
+                                            <h4 className="font-bold text-gray-800">{p.title}</h4>
+                                            <span className={`text-xs px-2 py-0.5 rounded text-white mb-2 inline-block
+                                                ${p.status==='in_progress'?'bg-blue-500':p.status==='submitted'?'bg-purple-500':'bg-green-600'}`}>
+                                                {p.status === 'in_progress' ? '執行中' : p.status === 'submitted' ? '已提交待驗' : '已結案'}
+                                            </span>
+                                            
+                                            {p.status === 'in_progress' && (
+                                                <div className="mt-2 p-2 bg-white rounded border">
+                                                    <p className="text-sm mb-1 font-bold">上傳成果檔案:</p>
+                                                    <input type="file" onChange={e=>uploadFile(p.id, e.target.files[0])} className="text-sm w-full" />
+                                                </div>
+                                            )}
+                                            {p.status === 'submitted' && <p className="text-sm text-blue-600 mt-2 font-bold">已提交，等待甲方驗收...</p>}
+                                            {p.status === 'completed' && !p.has_reviewed && (
+                                                <Button className="mt-2 w-full" onClick={()=>setReviewTarget(p)}>評價甲方</Button>
+                                            )}
+                                            {p.status === 'completed' && p.has_reviewed && <p className="text-sm text-green-600 mt-2 font-bold">✓ 已完成評價</p>}
+                                        </div>
+                                    ))}
+                                    {projects.length === 0 && <p className="text-gray-500">尚無承接紀錄。</p>}
+                                </div>
+                            </div>
+                        )}
+                    </div>
+                );
+            };
+
+            // --- 登入/註冊表單 ---
+            const AuthForm = () => {
+                const [isReg, setIsReg] = useState(false);
+                const [u, setU] = useState(""); const [p, setP] = useState(""); const [r, setR] = useState("client");
+                
+                const submit = (e) => {
+                    e.preventDefault();
+                    isReg ? register(u, p, r) : login(u, p);
+                };
+
+                return (
+                    <div className="min-h-screen flex items-center justify-center bg-gray-200">
+                        <form onSubmit={submit} className="bg-white p-8 rounded shadow-lg w-96">
+                            <h2 className="text-3xl font-bold mb-6 text-center text-blue-600">{isReg ? "註冊帳號" : "系統登入"}</h2>
+                            <Input label="帳號" value={u} onChange={e=>setU(e.target.value)} />
+                            <Input label="密碼" type="password" value={p} onChange={e=>setP(e.target.value)} />
+                            {isReg && (
+                                <div className="mb-4">
+                                    <label className="block text-gray-700 font-bold mb-1">角色選擇</label>
+                                    <select value={r} onChange={e=>setR(e.target.value)} className="w-full border p-2 rounded focus:outline-none focus:ring-2 focus:ring-blue-400">
+                                        <option value="client">甲方 (委託人)</option>
+                                        <option value="freelancer">乙方 (接案人)</option>
+                                    </select>
+                                </div>
+                            )}
+                            <Button type="submit" className="w-full mb-4 text-lg">{isReg ? "註冊" : "登入"}</Button>
+                            <p className="text-center text-blue-500 cursor-pointer text-sm hover:underline" onClick={()=>setIsReg(!isReg)}>
+                                {isReg ? "已有帳號? 點此登入" : "沒有帳號? 點此註冊"}
+                            </p>
+                        </form>
+                    </div>
+                );
             };
 
             return (
                 <div>
-                    <div className="flex justify-between items-center mb-6">
-                        <h2 className="text-2xl font-bold">委託人儀表板</h2>
-                        <Button onClick={() => setShowCreate(true)}>建立新專案</Button>
-                    </div>
-
-                    {projects.map(p => (
-                        <ProjectCard key={p.id} project={p} isClient={true}>
-                            {p.status === 'open' && (
-                                <Button variant="secondary" onClick={async () => {
-                                    const bids = await apiFetch(`/projects/${p.id}/bids`);
-                                    setViewBidsProject({ ...p, bids });
-                                }}>查看提案</Button>
-                            )}
-                            {p.status === 'submitted' && (
-                                <>
-                                    <Button variant="danger" onClick={() => handleReject(p.id)}>退件修改</Button>
-                                    <Button variant="success" onClick={() => handleComplete(p.id)}>確認結案</Button>
-                                </>
-                            )}
-                        </ProjectCard>
-                    ))}
-
-                    {showCreate && (
-                        <CreateProjectModal 
-                            onClose={() => setShowCreate(false)} 
-                            onSubmit={async (data) => {
-                                await apiFetch('/projects/', { method: 'POST', body: data });
-                                setShowCreate(false);
-                                fetchProjects();
-                            }} 
+                    {view === 'dashboard' ? <Dashboard /> : <AuthForm />}
+                    
+                    {/* 全域 Modal 渲染 */}
+                    {historyTarget && (
+                        <HistoryModal 
+                            userId={historyTarget.id} 
+                            userName={historyTarget.name}
+                            targetRole={historyTarget.role} // 傳入目標角色以顯示正確維度
+                            onClose={()=>setHistoryTarget(null)} 
                         />
                     )}
-
-                    {viewBidsProject && (
-                        <BidsListModal 
-                            project={viewBidsProject} 
-                            onClose={() => setViewBidsProject(null)}
-                            onAccept={handleAcceptBid}
+                    {reviewTarget && (
+                        <ReviewFormModal 
+                            project={reviewTarget} 
+                            role={user.role} 
+                            token={token}
+                            onClose={()=>setReviewTarget(null)} 
+                            onSuccess={()=>window.location.reload()} 
                         />
                     )}
                 </div>
             );
-        }
-
-        // --- Freelancer Dashboard ---
-        function FreelancerDashboard({ user, apiFetch }) {
-            const [openProjects, setOpenProjects] = useState([]);
-            const [myProjects, setMyProjects] = useState([]);
-            const [bidProject, setBidProject] = useState(null);
-
-            const fetchData = async () => {
-                const [opens, mys] = await Promise.all([
-                    apiFetch('/projects/'),
-                    apiFetch('/projects/assigned')
-                ]);
-                setOpenProjects(opens);
-                setMyProjects(mys);
-            };
-
-            useEffect(() => { fetchData(); }, []);
-
-            const handleSubmitFile = async (projectId, file) => {
-                const fd = new FormData();
-                fd.append('file', file);
-                try {
-                    await apiFetch(`/projects/${projectId}/submit_file`, { method: 'POST', body: fd });
-                    alert("檔案已上傳！");
-                    fetchData();
-                } catch (e) { alert(e.message); }
-            };
-
-            return (
-                <div className="space-y-8">
-                    <section>
-                        <h2 className="text-xl font-bold mb-4 border-b pb-2">開放中的專案 (可提案)</h2>
-                        {openProjects.length === 0 && <p className="text-gray-500">無專案</p>}
-                        {openProjects.map(p => {
-                            const isExpired = p.deadline && new Date(p.deadline) < new Date();
-                            return (
-                                <ProjectCard key={p.id} project={p} isClient={false}>
-                                    <Button 
-                                        onClick={() => setBidProject(p)} 
-                                        disabled={isExpired}
-                                        variant={isExpired ? "secondary" : "primary"}
-                                    >
-                                        {isExpired ? "已截止" : "我要提案"}
-                                    </Button>
-                                </ProjectCard>
-                            );
-                        })}
-                    </section>
-
-                    <section>
-                        <h2 className="text-xl font-bold mb-4 border-b pb-2">我承接的專案</h2>
-                        {myProjects.length === 0 && <p className="text-gray-500">無專案</p>}
-                        {myProjects.map(p => (
-                            <ProjectCard key={p.id} project={p} isClient={false}>
-                                {(p.status === 'in_progress' || p.status === 'submitted') && (
-                                    <div className="flex flex-col gap-2">
-                                        <label className="text-sm font-semibold text-gray-700">
-                                            {p.status === 'submitted' ? '上傳新版本 (修改)' : '上傳結案檔案'}
-                                        </label>
-                                        <input type="file" onChange={(e) => {
-                                            if(e.target.files[0]) {
-                                                if(confirm("確定上傳此檔案嗎？")) handleSubmitFile(p.id, e.target.files[0]);
-                                            }
-                                        }} />
-                                    </div>
-                                )}
-                            </ProjectCard>
-                        ))}
-                    </section>
-
-                    {bidProject && (
-                        <BidModal 
-                            project={bidProject} 
-                            onClose={() => setBidProject(null)} 
-                            apiFetch={apiFetch}
-                            onSuccess={() => { setBidProject(null); fetchData(); }}
-                        />
-                    )}
-                </div>
-            );
-        }
-
-        // --- Modals ---
-
-        function CreateProjectModal({ onClose, onSubmit }) {
-            const [title, setTitle] = useState('');
-            const [desc, setDesc] = useState('');
-            const [deadline, setDeadline] = useState('');
-
-            return (
-                <Modal title="建立新專案" onClose={onClose}>
-                    <form onSubmit={(e) => { e.preventDefault(); onSubmit({ title, description: desc, deadline: deadline || null }); }}>
-                        <Input label="標題" value={title} onChange={e => setTitle(e.target.value)} required />
-                        <Input label="描述" value={desc} onChange={e => setDesc(e.target.value)} />
-                        <Input label="截止期限 (選填)" type="datetime-local" value={deadline} onChange={e => setDeadline(e.target.value)} />
-                        <div className="mt-4 flex justify-end gap-2">
-                            <Button variant="secondary" onClick={onClose}>取消</Button>
-                            <Button type="submit">建立</Button>
-                        </div>
-                    </form>
-                </Modal>
-            );
-        }
-
-        function BidModal({ project, onClose, apiFetch, onSuccess }) {
-            const [amount, setAmount] = useState('');
-            const [msg, setMsg] = useState('');
-            const [file, setFile] = useState(null);
-            const [loading, setLoading] = useState(false);
-
-            const submit = async (e) => {
-                e.preventDefault();
-                if (!file) return alert("請上傳提案計畫書");
-                if (!file.name.toLowerCase().endsWith('.pdf')) return alert("只能上傳 PDF 格式");
-
-                const fd = new FormData();
-                fd.append('amount', amount);
-                fd.append('message', msg);
-                fd.append('proposal_file', file);
-
-                setLoading(true);
-                try {
-                    await apiFetch(`/projects/${project.id}/bid`, { method: 'POST', body: fd });
-                    alert("提案成功！");
-                    onSuccess();
-                } catch (err) { alert(err.message); }
-                setLoading(false);
-            };
-
-            return (
-                <Modal title={`提案：${project.title}`} onClose={onClose}>
-                    <form onSubmit={submit}>
-                        <Input label="報價金額" type="number" step="0.01" value={amount} onChange={e => setAmount(e.target.value)} required />
-                        <div className="mb-2">
-                            <label className="block text-sm font-medium mb-1">備註訊息</label>
-                            <textarea className="w-full border p-2 rounded" value={msg} onChange={e => setMsg(e.target.value)} />
-                        </div>
-                        <div className="mb-4">
-                            <label className="block text-sm font-medium mb-1">提案計畫書 (限 PDF)</label>
-                            <input type="file" accept=".pdf" onChange={e => setFile(e.target.files[0])} required className="block w-full text-sm text-gray-500 file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0 file:text-sm file:font-semibold file:bg-blue-50 file:text-blue-700 hover:file:bg-blue-100"/>
-                        </div>
-                        <div className="flex justify-end gap-2">
-                            <Button variant="secondary" onClick={onClose} disabled={loading}>取消</Button>
-                            <Button type="submit" disabled={loading}>{loading ? '上傳中...' : '送出提案'}</Button>
-                        </div>
-                    </form>
-                </Modal>
-            );
-        }
-
-        function BidsListModal({ project, onClose, onAccept }) {
-            return (
-                <Modal title={`提案列表：${project.title}`} onClose={onClose}>
-                    {project.bids.length === 0 ? <p>無提案</p> : (
-                        <div className="space-y-3">
-                            {project.bids.map(bid => (
-                                <div key={bid.id} className="border p-3 rounded flex justify-between items-center">
-                                    <div>
-                                        <div className="font-bold">{bid.freelancer.username}</div>
-                                        <div className="text-green-600 font-bold">${bid.amount}</div>
-                                        <div className="text-sm text-gray-600">{bid.message}</div>
-                                        {bid.proposal_url && (
-                                            <a href={`${API_URL}${bid.proposal_url}`} target="_blank" className="text-blue-500 text-sm hover:underline block mt-1">
-                                                [下載提案計畫書 PDF]
-                                            </a>
-                                        )}
-                                    </div>
-                                    <Button onClick={() => onAccept(bid.id)}>接受此提案</Button>
-                                </div>
-                            ))}
-                        </div>
-                    )}
-                </Modal>
-            );
-        }
-
-        // --- Auth & Main ---
-        function App() {
-            const [token, setToken] = useState(localStorage.getItem('token'));
-            const [user, setUser] = useState(null);
-            const [page, setPage] = useState('login');
-            
-            const apiFetch = useApi(token);
-
-            useEffect(() => {
-                if (token) {
-                    apiFetch('/users/me').then(u => { setUser(u); setPage('dashboard'); })
-                    .catch(() => { setToken(null); localStorage.removeItem('token'); setPage('login'); });
-                }
-            }, [token, apiFetch]);
-
-            const login = async (username, password) => {
-                const fd = new URLSearchParams();
-                fd.append('username', username);
-                fd.append('password', password);
-                const res = await fetch(`${API_URL}/token`, { method: 'POST', body: fd });
-                if (!res.ok) throw new Error('登入失敗');
-                const data = await res.json();
-                setToken(data.access_token);
-                localStorage.setItem('token', data.access_token);
-            };
-
-            const register = async (username, password, role) => {
-                await fetch(`${API_URL}/register`, { 
-                    method: 'POST', 
-                    headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify({ username, password, role }) 
-                });
-                alert("註冊成功，請登入");
-                setPage('login');
-            };
-
-            if (!token) {
-                if (page === 'register') return <AuthForm mode="register" onSubmit={register} onSwitch={() => setPage('login')} />;
-                return <AuthForm mode="login" onSubmit={login} onSwitch={() => setPage('register')} />;
-            }
-
-            return (
-                <div className="max-w-4xl mx-auto p-4">
-                    <header className="flex justify-between items-center mb-6 border-b pb-4">
-                        <h1 className="text-3xl font-bold text-blue-700">工作委託平台</h1>
-                        <div className="flex items-center gap-4">
-                            <span>{user?.username} ({user?.role === 'client' ? '委託人' : '接案人'})</span>
-                            <Button variant="secondary" onClick={() => { setToken(null); localStorage.removeItem('token'); setUser(null); }}>登出</Button>
-                        </div>
-                    </header>
-                    {user?.role === 'client' ? <ClientDashboard user={user} apiFetch={apiFetch} /> : <FreelancerDashboard user={user} apiFetch={apiFetch} />}
-                </div>
-            );
-        }
-
-        function AuthForm({ mode, onSubmit, onSwitch }) {
-            const [u, setU] = useState('');
-            const [p, setP] = useState('');
-            const [role, setRole] = useState('client');
-
-            return (
-                <div className="flex justify-center items-center min-h-screen">
-                    <div className="bg-white p-8 rounded shadow-md w-96">
-                        <h2 className="text-2xl font-bold mb-4 text-center">{mode === 'login' ? '登入' : '註冊'}</h2>
-                        <form onSubmit={async (e) => { e.preventDefault(); try { await onSubmit(u, p, role); } catch(err) { alert(err.message); } }}>
-                            <Input label="帳號" value={u} onChange={e => setU(e.target.value)} required />
-                            <Input label="密碼" type="password" value={p} onChange={e => setP(e.target.value)} required />
-                            {mode === 'register' && (
-                                <div className="mb-4">
-                                    <label className="block text-sm font-medium mb-1">角色</label>
-                                    <select className="w-full border p-2 rounded" value={role} onChange={e => setRole(e.target.value)}>
-                                        <option value="client">委託人</option>
-                                        <option value="freelancer">接案人</option>
-                                    </select>
-                                </div>
-                            )}
-                            <Button type="submit" className="w-full mt-2">{mode === 'login' ? '登入' : '註冊'}</Button>
-                        </form>
-                        <p className="mt-4 text-center text-blue-600 cursor-pointer text-sm" onClick={onSwitch}>
-                            {mode === 'login' ? '沒有帳號？註冊' : '已有帳號？登入'}
-                        </p>
-                    </div>
-                </div>
-            );
-        }
+        };
 
         const root = ReactDOM.createRoot(document.getElementById('root'));
         root.render(<StrictMode><App /></StrictMode>);
